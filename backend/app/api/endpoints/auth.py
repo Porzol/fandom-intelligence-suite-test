@@ -1,34 +1,33 @@
+from datetime import datetime, timedelta
+from typing import Optional
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
-from datetime import datetime, timedelta
 from jose import JWTError, jwt
-from passlib.context import CryptContext
 from sqlalchemy.orm import Session
-from typing import List, Optional
+from sqlalchemy.ext.asyncio import AsyncSession
 
-import app.core.config as config
-from app.db.base import Database
+from app.core import config
+from app.core.auth import get_password_hash, verify_password
+from app.db.base import get_db
 from app.models.user import User
-from app.schemas.user import UserCreate, UserResponse, Token, TokenData
+from app.schemas.user import UserCreate, UserInDB, Token, TokenData
 
 router = APIRouter()
 
-# Password hashing
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="api/auth/login")
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/token")
 
-database = Database(config.DATABASE_URL)
+async def get_user(db: AsyncSession, username: str):
+    query = await db.execute(User.__table__.select().where(User.username == username))
+    user = query.first()
+    if user:
+        return UserInDB(**user._mapping)
 
-# Helper functions
-def verify_password(plain_password, hashed_password):
-    return pwd_context.verify(plain_password, hashed_password)
-
-def get_password_hash(password):
-    return pwd_context.hash(password)
-
-def authenticate_user(db: Session, username: str, password: str):
-    user = db.query(User).filter(User.username == username).first()
-    if not user or not verify_password(password, user.hashed_password):
+async def authenticate_user(db: AsyncSession, username: str, password: str):
+    user = await get_user(db, username)
+    if not user:
+        return False
+    if not verify_password(password, user.hashed_password):
         return False
     return user
 
@@ -37,12 +36,12 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
     if expires_delta:
         expire = datetime.utcnow() + expires_delta
     else:
-        expire = datetime.utcnow() + timedelta(minutes=config.ACCESS_TOKEN_EXPIRE_MINUTES)
+        expire = datetime.utcnow() + timedelta(minutes=15)
     to_encode.update({"exp": expire})
     encoded_jwt = jwt.encode(to_encode, config.SECRET_KEY, algorithm=config.ALGORITHM)
     return encoded_jwt
 
-async def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(database.get_db())):
+async def get_current_user(token: str = Depends(oauth2_scheme), db: AsyncSession = Depends(get_db)):
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Could not validate credentials",
@@ -56,15 +55,19 @@ async def get_current_user(token: str = Depends(oauth2_scheme), db: Session = De
         token_data = TokenData(username=username)
     except JWTError:
         raise credentials_exception
-    user = db.query(User).filter(User.username == token_data.username).first()
+    user = await get_user(db, username=token_data.username)
     if user is None:
         raise credentials_exception
     return user
 
-# Routes
-@router.post("/login", response_model=Token)
-async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(database.get_db())):
-    user = authenticate_user(db, form_data.username, form_data.password)
+async def get_current_active_user(current_user = Depends(get_current_user)):
+    if not current_user.is_active:
+        raise HTTPException(status_code=400, detail="Inactive user")
+    return current_user
+
+@router.post("/token", response_model=Token)
+async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(), db: AsyncSession = Depends(get_db)):
+    user = await authenticate_user(db, form_data.username, form_data.password)
     if not user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -75,34 +78,16 @@ async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(
     access_token = create_access_token(
         data={"sub": user.username}, expires_delta=access_token_expires
     )
-    return {
-        "access_token": access_token, 
-        "token_type": "bearer",
-        "user": {
-            "id": user.id,
-            "username": user.username,
-            "email": user.email,
-            "full_name": user.full_name,
-            "role": user.role
-        }
-    }
+    return {"access_token": access_token, "token_type": "bearer"}
 
-@router.post("/register", response_model=UserResponse)
-async def register_user(user: UserCreate, db: Session = Depends(database.get_db())):
-    # Check if username already exists
-    db_user = db.query(User).filter(User.username == user.username).first()
-    if db_user:
+@router.post("/register", response_model=Token)
+async def register_user(user: UserCreate, db: AsyncSession = Depends(get_db)):
+    # Check if user already exists
+    existing_user = await get_user(db, username=user.username)
+    if existing_user:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Username already registered"
-        )
-    
-    # Check if email already exists
-    db_user = db.query(User).filter(User.email == user.email).first()
-    if db_user:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Email already registered"
         )
     
     # Create new user
@@ -110,16 +95,21 @@ async def register_user(user: UserCreate, db: Session = Depends(database.get_db(
     db_user = User(
         username=user.username,
         email=user.email,
-        full_name=user.full_name,
         hashed_password=hashed_password,
-        role=user.role
+        role=user.role,
+        is_active=True
     )
     db.add(db_user)
-    db.commit()
-    db.refresh(db_user)
+    await db.commit()
+    await db.refresh(db_user)
     
-    return db_user
+    # Generate token
+    access_token_expires = timedelta(minutes=config.ACCESS_TOKEN_EXPIRE_MINUTES)
+    access_token = create_access_token(
+        data={"sub": user.username}, expires_delta=access_token_expires
+    )
+    return {"access_token": access_token, "token_type": "bearer"}
 
-@router.get("/me", response_model=UserResponse)
-async def read_users_me(current_user: User = Depends(get_current_user)):
+@router.get("/me", response_model=UserInDB)
+async def read_users_me(current_user = Depends(get_current_active_user)):
     return current_user
