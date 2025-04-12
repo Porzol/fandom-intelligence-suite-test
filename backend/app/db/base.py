@@ -3,14 +3,14 @@ from sqlalchemy.orm import declarative_base, sessionmaker
 from sqlalchemy.pool import NullPool
 
 Base = declarative_base()
-class CustomBase:
-    @declared_attr
-    def __tablename__(cls):
-        return cls.__name__.lower()
+# class CustomBase:
+#     @declared_attr
+#     def __tablename__(cls):
+#         return cls.__name__.lower()
 
-    id = Column(Integer, primary_key=True, index=True)
-    created_at = Column(DateTime, default=datetime.datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+#     id = Column(Integer, primary_key=True, index=True)
+#     created_at = Column(DateTime, default=datetime.datetime.utcnow)
+#     updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
     
 class Database:
     def __init__(self, db_url: str):
