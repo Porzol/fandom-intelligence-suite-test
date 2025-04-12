@@ -11,9 +11,10 @@ COPY . .
 
 # Set environment variables
 ENV PYTHONPATH=/app
+ENV PORT=10000
 
 # Expose the port
 EXPOSE $PORT
 
 # Run the application
-CMD gunicorn -w 4 -k uvicorn.workers.UvicornWorker main:app --bind 0.0.0.0:$PORT
+CMD echo "PORT is $PORT" && gunicorn -w 4 -k uvicorn.workers.UvicornWorker main:app --bind 0.0.0.0:$PORT
