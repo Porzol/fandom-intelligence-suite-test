@@ -34,7 +34,7 @@ class Database:
         async with self.engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
 
-    async def get_db():
+    async def get_db(self):
         async with database.SessionLocal() as session:
             try:
                 yield session
