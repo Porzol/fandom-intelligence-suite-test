@@ -14,7 +14,6 @@ Base = declarative_base()
     
 class Database:
     def __init__(self, db_url: str):
-        db_url = config.DATABASE_URL
         if db_url.startswith('postgresql://'):
             db_url = db_url.replace('postgresql://', 'postgresql+asyncpg://')
         
