@@ -1,0 +1,122 @@
+services:
+  # PostgreSQL Database
+  - type: pserv
+    name: fandom-intelligence-db
+    env: docker
+    repo: https://github.com/render-examples/postgres-docker
+    envVars:
+      - key: POSTGRES_USER
+        value: fandom_user
+      - key: POSTGRES_PASSWORD
+        generateValue: true
+      - key: POSTGRES_DB
+        value: fandom_intelligence
+    disk:
+      name: data
+      mountPath: /var/lib/postgresql/data
+      sizeGB: 10
+
+  # Redis for Celery
+  - type: pserv
+    name: fandom-intelligence-redis
+    env: docker
+    repo: https://github.com/render-examples/redis
+    disk:
+      name: redis-data
+      mountPath: /data
+      sizeGB: 1
+
+  # Backend API Service
+  - type: web
+    name: fandom-intelligence-api
+    env: python
+    buildCommand: ./deployment/backend-build.sh
+    startCommand: gunicorn -w 4 -k uvicorn.workers.UvicornWorker main:app --bind 0.0.0.0:$PORT
+    repo: https://github.com/yourusername/fandom-intelligence-suite
+    rootDir: backend
+    envVars:
+      - key: DATABASE_URL
+        fromService:
+          type: pserv
+          name: fandom-intelligence-db
+          envVarKey: DATABASE_URL
+      - key: REDIS_URL
+        fromService:
+          type: pserv
+          name: fandom-intelligence-redis
+          envVarKey: REDIS_URL
+      - key: SECRET_KEY
+        generateValue: true
+      - key: ALGORITHM
+        value: HS256
+      - key: ACCESS_TOKEN_EXPIRE_MINUTES
+        value: 30
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: GOOGLE_DRIVE_CREDENTIALS
+        sync: false
+      - key: GOOGLE_DRIVE_FOLDER_ID
+        sync: false
+      - key: ENVIRONMENT
+        value: production
+      - key: CORS_ORIGINS
+        value: https://fandom-intelligence-ui.onrender.com
+    healthCheckPath: /api/health
+
+  # Celery Worker
+  - type: worker
+    name: fandom-intelligence-worker
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: celery -A celery_worker.celery worker --loglevel=info
+    repo: https://github.com/yourusername/fandom-intelligence-suite
+    rootDir: backend
+    envVars:
+      - key: DATABASE_URL
+        fromService:
+          type: pserv
+          name: fandom-intelligence-db
+          envVarKey: DATABASE_URL
+      - key: REDIS_URL
+        fromService:
+          type: pserv
+          name: fandom-intelligence-redis
+          envVarKey: REDIS_URL
+      - key: SECRET_KEY
+        fromService:
+          type: web
+          name: fandom-intelligence-api
+          envVarKey: SECRET_KEY
+      - key: OPENAI_API_KEY
+        fromService:
+          type: web
+          name: fandom-intelligence-api
+          envVarKey: OPENAI_API_KEY
+      - key: GOOGLE_DRIVE_CREDENTIALS
+        fromService:
+          type: web
+          name: fandom-intelligence-api
+          envVarKey: GOOGLE_DRIVE_CREDENTIALS
+      - key: GOOGLE_DRIVE_FOLDER_ID
+        fromService:
+          type: web
+          name: fandom-intelligence-api
+          envVarKey: GOOGLE_DRIVE_FOLDER_ID
+      - key: ENVIRONMENT
+        value: production
+
+  # Frontend Static Site
+  - type: web
+    name: fandom-intelligence-ui
+    env: static
+    buildCommand: ./deployment/frontend-build.sh
+    staticPublishPath: ./build
+    repo: https://github.com/yourusername/fandom-intelligence-suite
+    rootDir: frontend
+    envVars:
+      - key: REACT_APP_API_URL
+        value: https://fandom-intelligence-api.onrender.com/api
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
