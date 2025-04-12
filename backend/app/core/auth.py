@@ -4,7 +4,7 @@ from typing import List, Optional
 from jose import JWTError, jwt
 from sqlalchemy.orm import Session
 
-import app.core.config as  config
+import app.core.config as config
 from app.db.base import get_db
 from app.models.user import User, UserRole
 from app.schemas.user import TokenData
