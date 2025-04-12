@@ -11,7 +11,6 @@ COPY . .
 
 # Set environment variables
 ENV PYTHONPATH=/app
-ENV PORT=10000
 
 # Expose the port
 EXPOSE $PORT
