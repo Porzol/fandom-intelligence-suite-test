@@ -16,4 +16,4 @@ ENV PYTHONPATH=/app
 EXPOSE 8000
 
 # Run the application
-CMD echo "PORT is $PORT" && gunicorn -w 4 -k uvicorn.workers.UvicornWorker main:app --bind 0.0.0.0:8000
+CMD gunicorn -w 4 -k uvicorn.workers.UvicornWorker main:app --bind 0.0.0.0:8000
